@@ -10,17 +10,36 @@ from colorama import Fore, Back, Style
 import matplotlib.pyplot as plt
 import numpy as np
 
+"""
+latency_test.py
+    
+Performs a series of pings to a specified server with specified packet size and
+frequency. Generates a plot of ping latency using matplotlib.
+
+Usage:  See usage_msg below or run ./latency_test.py -h.
+        Requires sudo for interval <0.2s
+
+Required parameters:
+    testtime:    Length of test in seconds
+    packetsize:  Size of individual packets in Bytes
+    interval:    Delay between each ping in seconds. Interval <0.2s requires sudo.
+    target:      IP address to ping (ipv6 not tested)
+
+Optional paramters:
+    outputfile  [./default.log]: Logfile to write test results to.
+    machinename ["unspecified"]: Name of machine test is running on (figure title)
+"""
 
 def main(argv):
-    usage_msg = "latency_test.py -w <testtime> -s <packetsize> -i <interval> -t <targetip> -o <outputfile> -m <machinename>"
+    usage_msg = "latency_test.py -w <testtime> -s <packetsize> -i <interval> -t <targetip> [-o <outputfile>] [-m <machinename>]"
 
     # Test conditions
-    fname = ""
-    psize = 300
-    time = 0
+    fname = "lt_default.log"
+    psize = -1
+    time = -1
     ip = ""
-    interval = 1
-    machine = ""
+    interval = -1.
+    machine = "unspecified"
 
     # Setting conditions from commandline args
     try:
@@ -45,17 +64,40 @@ def main(argv):
             fname = arg
         elif opt in ("-m", "--machine"):
             machine = arg
+    
+    # Error Checking
+    if psize==-1 or time==-1 or interval==-1 or ip=="":
+        print(Fore.RED + "Error: Required arguments not specified."+Style.RESET_ALL)
+        print("Usage: "+usage_msg)
+        sys.exit(2)
+    
+    if psize<=0:
+        print(Fore.RED + "Error: packetsize must be positive, nonzero."+Style.RESET_ALL)
+        sys.exit(2)
+    if time<=0:
+        print(Fore.RED + "Error: testtime must be positive, nonzero."+Style.RESET_ALL)
+        sys.exit(2)
+    if interval<=0:
+        print(Fore.RED + "Error: interval must be positive, nonzero."+Style.RESET_ALL)
+        sys.exit(2)
+    
+    if interval<0.2 and os.geteuid()!=0:
+        print(Fore.RED + "Error: Root user permissions required for interval<0.2s (use sudo)"+Style.RESET_ALL)
+        sys.exit(2)
+
+
+    if os.path.exists(fname):
+        print(Fore.RED + "Error: Log file already exists.")
+        print(Style.RESET_ALL)
+        sys.exit(2)
+
+
     print("\nLog file:    " + fname)
     print("Machine:     " + machine)
     print("Target IP:   " + ip)
     print("Packet Size: " + str(psize) + "B")
     print("Interval:    " + "{:.4f}".format(interval) + "s")
     print("Test Time:   " + str(time) + "s")
-
-    if os.path.exists(fname):
-        print(Fore.RED + "Error: Log file already exists.")
-        print(Style.RESET_ALL)
-        sys.exit(2)
 
     run_test(time, psize, interval, ip, fname)
     plot(time, psize, int(1./interval), ip, fname, machine)
