@@ -26,12 +26,14 @@ Required parameters:
     target:      IP address to ping (ipv6 not tested)
 
 Optional paramters:
-    outputfile  [./default.log]: Logfile to write test results to.
+    logfile  [./default.log]: Logfile to write test results to.
     machinename ["unspecified"]: Name of machine test is running on (figure title)
+    plotonly: If specified, takes -l logfile option and plots existing data
+
 """
 
 def main(argv):
-    usage_msg = "latency_test.py -w <testtime> -s <packetsize> -i <interval> -t <targetip> [-o <outputfile>] [-m <machinename>]"
+    usage_msg = "latency_test.py -w <testtime> -s <packetsize> -i <interval> -t <targetip> [-l <logfile>] [-m <machinename>]\n\nlatency_test.py --plotonly -l <logfile>"
 
     # Test conditions
     fname = "lt_default.log"
@@ -40,17 +42,18 @@ def main(argv):
     ip = ""
     interval = -1.
     machine = "unspecified"
+    plotonly = False
 
     # Setting conditions from commandline args
     try:
-        opts, args = getopt.getopt(argv,"hw:s:i:t:o:m:",
-                ["deadline=","packetsize=","interval=","targetip=","ofile=","machine="])
+        opts, args = getopt.getopt(argv,"hw:s:i:t:l:m:",
+                ["deadline=","packetsize=","interval=","targetip=","logfile=","machine=","plotonly"])
     except getopt.GetoptError:
-        print usage_msg
+        print(usage_msg)
         sys.exit(2)
     for opt, arg in opts:
         if opt == "-h":
-            print usage_msg
+            print(usage_msg)
             sys.exit()
         elif opt in ("-w", "--deadline"):
             time = int(arg)
@@ -60,38 +63,61 @@ def main(argv):
             interval = float(arg)
         elif opt in ("-t", "--targetip"):
             ip = arg
-        elif opt in ("-o", "--ofile"):
+        elif opt in ("-l", "--logfile"):
             fname = arg
         elif opt in ("-m", "--machine"):
             machine = arg
+        elif opt == "plotonly":
+            plotonly = True
     
     # Error Checking
-    if psize==-1 or time==-1 or interval==-1 or ip=="":
-        print(Fore.RED + "Error: Required arguments not specified."+Style.RESET_ALL)
-        print("Usage: "+usage_msg)
-        sys.exit(2)
+    if not plotonly:
+        if psize==-1 or time==-1 or interval==-1 or ip=="":
+            print(Fore.RED + "Error: Required arguments not specified."+Style.RESET_ALL)
+            print("Usage: "+usage_msg)
+            sys.exit(2)
+        
+        if psize<=0:
+            print(Fore.RED + "Error: packetsize must be positive, nonzero."+Style.RESET_ALL)
+            sys.exit(2)
+        if time<=0:
+            print(Fore.RED + "Error: testtime must be positive, nonzero."+Style.RESET_ALL)
+            sys.exit(2)
+        if interval<=0:
+            print(Fore.RED + "Error: interval must be positive, nonzero."+Style.RESET_ALL)
+            sys.exit(2)
+        
+        if interval<0.2 and os.geteuid()!=0:
+            print(Fore.RED + "Error: Root user permissions required for interval<0.2s (use sudo)"+Style.RESET_ALL)
+            sys.exit(2)
+
+        exec_flag = ''
+        if os.path.exists(fname):
+            print(Fore.YELLOW + "Warning: Log file already exists.")
+            print(Style.RESET_ALL+ "Would you like to Overwrite the file (o) or Cancel (c)?")
+            exec_flag = input()
+            
+            if exec_flag == 'c':
+                sys.exit()
+            elif exec_flag == 'o':
+                os.remove(fname)
+            else:
+                print(Fore.RED + "Error: Invalid option entered" + Style.RESET_ALL)
+                sys.exit(2)
     
-    if psize<=0:
-        print(Fore.RED + "Error: packetsize must be positive, nonzero."+Style.RESET_ALL)
-        sys.exit(2)
-    if time<=0:
-        print(Fore.RED + "Error: testtime must be positive, nonzero."+Style.RESET_ALL)
-        sys.exit(2)
-    if interval<=0:
-        print(Fore.RED + "Error: interval must be positive, nonzero."+Style.RESET_ALL)
-        sys.exit(2)
+        run_test(time, psize, interval, ip, fname, machine)
     
-    if interval<0.2 and os.geteuid()!=0:
-        print(Fore.RED + "Error: Root user permissions required for interval<0.2s (use sudo)"+Style.RESET_ALL)
-        sys.exit(2)
+    if plotonly:
+        if not os.path.exists(fname):
+            print(Fore.RED + "Error: Specified logfile does not exist" + Style.RESET_ALL)
+            sys.exit(2)
+    
+    
+    plot(fname)
 
 
-    if os.path.exists(fname):
-        print(Fore.RED + "Error: Log file already exists.")
-        print(Style.RESET_ALL)
-        sys.exit(2)
-
-
+def run_test(time, psize, interval, ip, fname, machine):
+    print(Fore.GREEN + "Running test with parameters:" + Style.RESET_ALL)
     print("\nLog file:    " + fname)
     print("Machine:     " + machine)
     print("Target IP:   " + ip)
@@ -99,23 +125,29 @@ def main(argv):
     print("Interval:    " + "{:.4f}".format(interval) + "s")
     print("Test Time:   " + str(time) + "s")
 
-    run_test(time, psize, interval, ip, fname)
-    plot(time, psize, int(1./interval), ip, fname, machine)
-
-
-def run_test(time, psize, interval, ip, fname):
+    header_str = "{},{},{:.4f},{},{}".format(time,psize,interval,ip,machine)
+    with open(fname, "w") as f:
+        f.write(header_str)
+    
     cmd = "ping -w"+str(time)+" -s"+str(psize)+" -i"+"{:.4f}".format(interval)+" "+ip+" | grep icmp_seq | cut -f7 -d \" \" | cut -f2 -d \"=\" >>"+fname
-    print(Fore.GREEN + "\nRunning: "+cmd)
-    print(Style.RESET_ALL)
     os.system(cmd)
 
 
-def plot(time, psize, pps, ip, fname, machine):
+def plot(fname):
     # File reading
+    header = []
     data = []
     with open(fname, "r") as f:
+        header = f.readline().split(",")
         for line in f.readlines():
             data.append(float(line))
+
+    # Reading vars from header row
+    time = int(header[0])
+    psize = int(header[1])
+    pps = int(1/float(header[2]))
+    ip = header[3]
+    machine = header[4]
 
     # Plot initialization
     plt.rcParams['axes.grid'] = True
